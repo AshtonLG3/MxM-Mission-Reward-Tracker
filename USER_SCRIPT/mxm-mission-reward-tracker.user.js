@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MxM Mission Reward Tracker (USD → ZAR / EUR / NGN / KES)
 // @namespace    mxm-tools
-// @version      2.0.0
+// @version      2.1.0
 // @description  Shows total completed mission earnings (daily / weekly / monthly) in USD and converts to multiple currencies with a draggable, compact/full widget.
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
@@ -12,7 +12,7 @@
 
 (function () {
   'use strict';
-  console.log('[MXM Mission Tracker] Script v2.0.0 initialised.');
+  console.log('[MXM Mission Tracker] Script v2.1.0 initialised.');
 
   const TOTAL_WIDGET_ID = 'mxm-draggable-total-widget';
 
@@ -116,7 +116,12 @@
       day: { id: dayId, totalUSD: 0 },
       week: { id: weekId, totalUSD: 0 },
       month: { id: monthId, totalUSD: 0 },
-      lastSnapshot: { totalUSD: 0, count: 0 }
+      lastSnapshot: {
+        missionId: null,
+        rewardRate: null,
+        totalUSD: 0,
+        count: 0
+      }
     };
   }
 
@@ -140,7 +145,15 @@
       stats.month = { id: monthId, totalUSD: 0 };
     }
     if (!stats.lastSnapshot) {
-      stats.lastSnapshot = { totalUSD: 0, count: 0 };
+      stats.lastSnapshot = { missionId: null, rewardRate: null, totalUSD: 0, count: 0 };
+    } else {
+      stats.lastSnapshot.missionId = stats.lastSnapshot.missionId || null;
+      stats.lastSnapshot.rewardRate =
+        typeof stats.lastSnapshot.rewardRate === 'number'
+          ? stats.lastSnapshot.rewardRate
+          : null;
+      stats.lastSnapshot.totalUSD = stats.lastSnapshot.totalUSD || 0;
+      stats.lastSnapshot.count = stats.lastSnapshot.count || 0;
     }
 
     return stats;
@@ -211,6 +224,74 @@
       isDragging = false;
       element.style.cursor = 'grab';
     });
+  }
+
+  // ------ Mission helpers ------
+
+  function getCurrentMissionId() {
+    try {
+      const url = new URL(window.location.href);
+
+      const qMission = url.searchParams.get('mission_id');
+      if (qMission) return qMission;
+
+      const match = url.pathname.match(/\/tasks\/([a-zA-Z0-9]+)/);
+      if (match && match[1]) return match[1];
+
+      const match2 = url.pathname.match(/\/missions\/([a-zA-Z0-9]+)/);
+      if (match2 && match2[1]) return match2[1];
+    } catch (e) {
+      console.error('[MXM Mission Tracker] Failed to parse mission id:', e);
+    }
+
+    return 'unknown';
+  }
+
+  function shouldResetSnapshot(currentMissionId, currentRate, previousSnapshot) {
+    return (
+      currentMissionId !== previousSnapshot.missionId ||
+      currentRate !== previousSnapshot.rewardRate
+    );
+  }
+
+  function computeDelta(stats, totalUSDNumber, count, missionId, rewardRate) {
+    const prev = stats.lastSnapshot || {
+      missionId: null,
+      rewardRate: null,
+      totalUSD: 0,
+      count: 0
+    };
+
+    if (shouldResetSnapshot(missionId, rewardRate, prev)) {
+      stats.lastSnapshot = {
+        missionId,
+        rewardRate,
+        totalUSD: totalUSDNumber,
+        count
+      };
+      return 0;
+    }
+
+    if (count < prev.count) {
+      stats.lastSnapshot = {
+        missionId,
+        rewardRate,
+        totalUSD: totalUSDNumber,
+        count
+      };
+      return 0;
+    }
+
+    const delta = totalUSDNumber - prev.totalUSD;
+
+    stats.lastSnapshot = {
+      missionId,
+      rewardRate,
+      totalUSD: totalUSDNumber,
+      count
+    };
+
+    return delta > 0 ? delta : 0;
   }
 
   // ------ Mission reward rate (USD) ------
@@ -450,29 +531,14 @@
       stats = ensureStats(stats, now);
 
       const { totalUSD, totalUSDNumber, count, rate } = calculateGlobalTotal();
-
-      // Calculate incremental delta for this update
-      const previous = stats.lastSnapshot || { totalUSD: 0, count: 0 };
-      let deltaUSD = 0;
-
-      if (
-        totalUSDNumber >= previous.totalUSD &&
-        count >= previous.count
-      ) {
-        deltaUSD = totalUSDNumber - previous.totalUSD;
-      } else {
-        // Probably navigated to a different mission or the page changed.
-        // Do not add delta, just reset snapshot baseline.
-        deltaUSD = 0;
-      }
+      const missionId = getCurrentMissionId();
+      const deltaUSD = computeDelta(stats, totalUSDNumber, count, missionId, rate);
 
       if (deltaUSD > 0) {
         stats.day.totalUSD += deltaUSD;
         stats.week.totalUSD += deltaUSD;
         stats.month.totalUSD += deltaUSD;
       }
-
-      stats.lastSnapshot = { totalUSD: totalUSDNumber, count };
       saveStats(stats);
 
       const isGoalAchieved = totalUSDNumber >= 50.0;
