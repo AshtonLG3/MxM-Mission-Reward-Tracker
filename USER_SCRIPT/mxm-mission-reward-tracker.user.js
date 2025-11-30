@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MxM Mission Reward Tracker (Final Merge v6.0)
 // @namespace    mxm-tools
-// @version      6.0.0
+// @version      6.0.1
 // @description  v5.2.0 Day/Week Logic + v5.4.0 Portfolio Total (Best of both worlds).
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
