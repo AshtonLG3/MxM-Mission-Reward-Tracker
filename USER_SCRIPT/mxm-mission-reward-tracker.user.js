@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         MxM Mission Reward Tracker (Final Merge v6.3.1)
+// @name         MxM Mission Reward Tracker (Final Merge v6.3.2)
 // @namespace    mxm-tools
-// @version      6.3.1
+// @version      6.3.2
 // @description  v5.2.0 Day/Week Logic + Portfolio (One-Time Populate + Deltas) + Export/Reset buttons.
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
@@ -12,7 +12,7 @@
 
 (function () {
   'use strict';
-  console.log('[MXM Tracker v6.3.1] Final Merge + One-Time Portfolio + Export/Reset');
+  console.log('[MXM Tracker v6.3.2] Final Merge + One-Time Portfolio + Export/Reset');
 
   // --- CONFIG ---
   const WIDGET_ID = 'mxm-dashboard-widget';
@@ -378,20 +378,17 @@ setInterval(updateExchangeRates, 24 * 60 * 60 * 1000); // every 24 hours
     }
 
     // --- FIRST VISIT / MISSION SWITCH ---
-    if (stats.lastGlobalCount === null || stats.lastMissionId !== missionId) {
-
-      // ONE-TIME ABSOLUTE POPULATE:
-      // Only if this mission's portfolio is zero AND MxM count > 0.
-      if (count > 0 && (stats.portfolio[missionId].tasks === 0)) {
-        stats.portfolio[missionId].tasks = count;
-        stats.portfolio[missionId].usd = count * rate;
-      }
-
-      stats.lastGlobalCount = count;
+    if (stats.lastMissionId !== missionId) {
+      stats.lastGlobalCount = count; // new mission = initialize
       stats.lastMissionId = missionId;
       stats.lastRate = rate;
       saveStats(stats);
-      updateUI();
+      return;
+    }
+
+    if (stats.lastGlobalCount === null) {
+      stats.lastGlobalCount = count; // domain switch = preserve count
+      saveStats(stats);
       return;
     }
 
