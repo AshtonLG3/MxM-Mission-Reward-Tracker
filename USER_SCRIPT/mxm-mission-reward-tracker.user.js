@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         MxM Mission Reward Tracker (Final Merge v6.3.0)
+// @name         MxM Mission Reward Tracker (Final Merge v6.3.1)
 // @namespace    mxm-tools
-// @version      6.3.0
+// @version      6.3.1
 // @description  v5.2.0 Day/Week Logic + Portfolio (One-Time Populate + Deltas) + Export/Reset buttons.
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
@@ -12,7 +12,7 @@
 
 (function () {
   'use strict';
-  console.log('[MXM Tracker v6.3.0] Final Merge + One-Time Portfolio + Export/Reset');
+  console.log('[MXM Tracker v6.3.1] Final Merge + One-Time Portfolio + Export/Reset');
 
   // --- CONFIG ---
   const WIDGET_ID = 'mxm-dashboard-widget';
@@ -225,8 +225,11 @@ setInterval(updateExchangeRates, 24 * 60 * 60 * 1000); // every 24 hours
 
     div.innerHTML = `
       <div style="padding:10px 12px; display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.35); border-bottom:1px solid rgba(0,0,0,0.7); border-top-left-radius:10px; border-top-right-radius:10px;">
-        <span style="font-weight:800; font-size:10px; letter-spacing:1.3px; color:${COLOR_GOLD}; text-transform:uppercase;">Global Wallet</span>
-        <span id="mxm-cur-flag" style="cursor:pointer; font-size:18px;">🇺🇸</span>
+        <span style="font-weight:800; font-size:10px; opacity:0.7; letter-spacing:1px; color:#4caf50;">GLOBAL WALLET</span>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <span id="mxm-top-cur" style="font-size:12px;">USD</span>
+          <span id="mxm-cur-flag" style="cursor:pointer; font-size:18px;">🇺🇸</span>
+        </div>
       </div>
 
       <div style="display:grid; grid-template-columns: 1fr 1fr 1.2fr; text-align:center; background:rgba(0,0,0,0.4);">
@@ -328,6 +331,9 @@ setInterval(updateExchangeRates, 24 * 60 * 60 * 1000); // every 24 hours
 
     const flagEl = document.getElementById('mxm-cur-flag');
     if (flagEl) flagEl.textContent = currency.flag;
+
+    const topCurEl = document.getElementById('mxm-top-cur');
+    if (topCurEl) topCurEl.textContent = settings.currency;
 
     const pageTotalEl = document.getElementById('mxm-page-total');
     if (pageTotalEl) pageTotalEl.textContent = `${currency.symbol}${pageTotal}`;
