@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         MxM Mission Reward Tracker (USD → ZAR / EUR / NGN / KES)
+// @name         MxM Mission Reward Tracker (Live Rates v5.2)
 // @namespace    mxm-tools
-// @version      2.1.0
-// @description  Shows total completed mission earnings (daily / weekly / monthly) in USD and converts to multiple currencies with a draggable, compact/full widget.
+// @version      5.2.0
+// @description  Dashboard with Nov 2025 Exchange Rates and clear Cumulative Wallet tracking.
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
 // @match        https://curators-beta.musixmatch.com/*
@@ -12,601 +12,261 @@
 
 (function () {
   'use strict';
-  console.log('[MXM Mission Tracker] Script v2.1.0 initialised.');
+  console.log('[MXM Tracker v5.2] Updated with Nov 30, 2025 Exchange Rates');
 
-  const TOTAL_WIDGET_ID = 'mxm-draggable-total-widget';
+  // --- CONFIG ---
+  const WIDGET_ID = 'mxm-dashboard-widget';
+  const UPDATE_INTERVAL = 1000;
+  const HUMAN_SPEED_LIMIT = 2;
 
-  const FALLBACK_REWARD_RATE = 0.5;
-
-  // ---- Currency config: base is USD, others are multiplier from USD ----
+  // UPDATED RATES (Nov 30, 2025)
   const CURRENCIES = {
-    USD: {
-      name: 'US Dollar',
-      symbol: '$',
-      factorFromUSD: 1,
-      flag: 'https://flagcdn.com/us.svg'
-    },
-    ZAR: {
-      name: 'South African Rand',
-      symbol: 'R',
-      factorFromUSD: 18.2, // adjust if you want a different estimate
-      flag: 'https://flagcdn.com/za.svg'
-    },
-    EUR: {
-      name: 'Euro',
-      symbol: '€',
-      factorFromUSD: 0.92,
-      flag: 'https://flagcdn.com/eu.svg'
-    },
-    NGN: {
-      name: 'Nigerian Naira',
-      symbol: '₦',
-      factorFromUSD: 1600,
-      flag: 'https://flagcdn.com/ng.svg'
-    },
-    KES: {
-      name: 'Kenyan Shilling',
-      symbol: 'KSh',
-      factorFromUSD: 130,
-      flag: 'https://flagcdn.com/ke.svg'
-    }
+    USD: { symbol: '$', factor: 1, flag: '🇺🇸' },
+    ZAR: { symbol: 'R', factor: 17.11, flag: '🇿🇦' }, // Updated from 18.2
+    EUR: { symbol: '€', factor: 0.86, flag: '🇪🇺' }, // Updated from 0.92
+    NGN: { symbol: '₦', factor: 1441, flag: '🇳🇬' }, // Updated from 1600
+    KES: { symbol: 'KSh', factor: 129, flag: '🇰🇪' }  // Updated from 130
   };
 
-  const SUPPORTED_CURRENCIES = ['USD', 'ZAR', 'EUR', 'NGN', 'KES'];
+  const SETTINGS_KEY = 'mxmSettings_v5';
+  const STATS_KEY = 'mxmStats_v5';
 
-  // Colours
-  const WIDGET_BG_COLOR = 'rgba(52, 52, 52, 0.95)';
-  const WIDGET_TEXT_COLOR = 'rgba(233, 233, 233, 0.98)';
-  const BORDER_COLOR_SUCCESS = '#28a745';
-  const BORDER_COLOR_PENDING = '#dc3545';
-
-  // Storage keys
-  const STATS_KEY = 'mxmMissionTrackerStats_v2';
-  const SETTINGS_KEY = 'mxmMissionTrackerSettings_v2';
-
-  // ------ Helpers: dates for daily / weekly / monthly tracking ------
-
-  function getDayId(date) {
-    return date.toISOString().slice(0, 10); // YYYY-MM-DD
+  // --- DATE HELPERS ---
+  function getIds() {
+    const now = new Date();
+    const dayId = now.toLocaleDateString('en-CA');
+    const monthId = dayId.slice(0, 7);
+    const d = new Date(now);
+    const day = d.getDay();
+    const diff = d.getDate() - day;
+    const weekStart = new Date(d.setDate(diff));
+    const weekId = weekStart.toLocaleDateString('en-CA');
+    return { dayId, weekId, monthId };
   }
 
-  // Week start is Sunday 00:00
-  function getWeekStartId(date) {
-    const d = new Date(date.getTime());
-    const day = d.getDay(); // 0 = Sunday
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - day);
-    return d.toISOString().slice(0, 10);
-  }
-
-  function getMonthId(date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    return `${year}-${month}`; // YYYY-MM
-  }
-
-  // ------ Storage helpers ------
-
+  // --- STORAGE ---
   function loadStats() {
-    try {
-      const raw = localStorage.getItem(STATS_KEY);
-      if (!raw) {
-        return null;
-      }
-      return JSON.parse(raw);
-    } catch (e) {
-      console.error('[MXM Mission Tracker] Failed to parse stats from storage:', e);
-      return null;
+    const ids = getIds();
+    let s;
+    try { s = JSON.parse(localStorage.getItem(STATS_KEY)); } catch (e) {}
+
+    if (!s || !s.ids) {
+      s = {
+        ids: ids,
+        counts: { day: 0, week: 0, month: 0 },
+        money: { day: 0, week: 0, month: 0 },
+        lastGlobalCount: null,
+        lastMissionId: null,
+        lastRate: 1.0
+      };
     }
+
+    if (s.ids.dayId !== ids.dayId) {
+      s.counts.day = 0; s.money.day = 0;
+      s.ids.dayId = ids.dayId;
+      s.lastGlobalCount = null;
+    }
+    if (s.ids.weekId !== ids.weekId) {
+      s.counts.week = 0; s.money.week = 0;
+      s.ids.weekId = ids.weekId;
+    }
+    if (s.ids.monthId !== ids.monthId) {
+      s.counts.month = 0; s.money.month = 0;
+      s.ids.monthId = ids.monthId;
+    }
+    return s;
   }
 
-  function saveStats(stats) {
-    try {
-      localStorage.setItem(STATS_KEY, JSON.stringify(stats));
-    } catch (e) {
-      console.error('[MXM Mission Tracker] Failed to save stats:', e);
-    }
-  }
-
-  function createEmptyStats(now) {
-    const dayId = getDayId(now);
-    const weekId = getWeekStartId(now);
-    const monthId = getMonthId(now);
-    return {
-      day: { id: dayId, totalUSD: 0 },
-      week: { id: weekId, totalUSD: 0 },
-      month: { id: monthId, totalUSD: 0 },
-      lastSnapshot: {
-        missionId: null,
-        rewardRate: null,
-        totalUSD: 0,
-        count: 0
-      }
-    };
-  }
-
-  function ensureStats(stats, now) {
-    if (!stats) {
-      stats = createEmptyStats(now);
-      return stats;
-    }
-
-    const dayId = getDayId(now);
-    const weekId = getWeekStartId(now);
-    const monthId = getMonthId(now);
-
-    if (!stats.day || stats.day.id !== dayId) {
-      stats.day = { id: dayId, totalUSD: 0 };
-    }
-    if (!stats.week || stats.week.id !== weekId) {
-      stats.week = { id: weekId, totalUSD: 0 };
-    }
-    if (!stats.month || stats.month.id !== monthId) {
-      stats.month = { id: monthId, totalUSD: 0 };
-    }
-    if (!stats.lastSnapshot) {
-      stats.lastSnapshot = { missionId: null, rewardRate: null, totalUSD: 0, count: 0 };
-    } else {
-      stats.lastSnapshot.missionId = stats.lastSnapshot.missionId || null;
-      stats.lastSnapshot.rewardRate =
-        typeof stats.lastSnapshot.rewardRate === 'number'
-          ? stats.lastSnapshot.rewardRate
-          : null;
-      stats.lastSnapshot.totalUSD = stats.lastSnapshot.totalUSD || 0;
-      stats.lastSnapshot.count = stats.lastSnapshot.count || 0;
-    }
-
-    return stats;
-  }
+  function saveStats(s) { localStorage.setItem(STATS_KEY, JSON.stringify(s)); }
 
   function loadSettings() {
-    try {
-      const raw = localStorage.getItem(SETTINGS_KEY);
-      if (!raw) {
-        return {
-          currency: 'ZAR',
-          mode: 'full'
-        };
+    try { return { currency: 'USD', ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) }; }
+    catch (e) { return { currency: 'USD' }; }
+  }
+  function saveSettings(s) { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
+
+  // --- DOM PARSING ---
+  function getCompletedTaskCount() {
+    const patterns = [
+        /(?:Completed|Concluído|Terminé|Completado)\s*[·•]\s*(\d+)/i,
+        /(?:Completed|Concluído)\s+(\d+)(?!\s*h)/i
+    ];
+    const elements = document.querySelectorAll('div, span, p');
+    for (const el of elements) {
+      if (!el.offsetParent) continue;
+      const text = el.textContent.trim();
+      if (text.length > 50) continue;
+      for (const p of patterns) {
+        const m = text.match(p);
+        if (m && m[1]) return parseInt(m[1], 10);
       }
-      const parsed = JSON.parse(raw);
-      if (!SUPPORTED_CURRENCIES.includes(parsed.currency)) {
-        parsed.currency = 'ZAR';
-      }
-      if (parsed.mode !== 'compact' && parsed.mode !== 'full') {
-        parsed.mode = 'full';
-      }
-      return parsed;
-    } catch (e) {
-      console.error('[MXM Mission Tracker] Failed to parse settings from storage:', e);
-      return {
-        currency: 'ZAR',
-        mode: 'full'
-      };
     }
+    return null;
   }
-
-  function saveSettings(settings) {
-    try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-    } catch (e) {
-      console.error('[MXM Mission Tracker] Failed to save settings:', e);
-    }
-  }
-
-  let stats = ensureStats(loadStats(), new Date());
-  let settings = loadSettings();
-
-  // ------ Draggable widget helper ------
-
-  function makeDraggable(element) {
-    let offsetX = 0,
-      offsetY = 0,
-      isDragging = false;
-
-    element.addEventListener('mousedown', (e) => {
-      if (e.target.closest('.mxm-close-btn') || e.target.closest('.mxm-currency-select')) return;
-      isDragging = true;
-      offsetX = e.clientX - element.getBoundingClientRect().left;
-      offsetY = e.clientY - element.getBoundingClientRect().top;
-      element.style.cursor = 'grabbing';
-    });
-
-    document.addEventListener('mousemove', (e) => {
-      if (!isDragging) return;
-      e.preventDefault();
-      element.style.left = `${e.clientX - offsetX}px`;
-      element.style.top = `${e.clientY - offsetY}px`;
-      element.style.right = 'auto';
-      element.style.bottom = 'auto';
-    });
-
-    document.addEventListener('mouseup', () => {
-      isDragging = false;
-      element.style.cursor = 'grab';
-    });
-  }
-
-  // ------ Mission helpers ------
-
-  function getCurrentMissionId() {
-    try {
-      const url = new URL(window.location.href);
-
-      const qMission = url.searchParams.get('mission_id');
-      if (qMission) return qMission;
-
-      const match = url.pathname.match(/\/tasks\/([a-zA-Z0-9]+)/);
-      if (match && match[1]) return match[1];
-
-      const match2 = url.pathname.match(/\/missions\/([a-zA-Z0-9]+)/);
-      if (match2 && match2[1]) return match2[1];
-    } catch (e) {
-      console.error('[MXM Mission Tracker] Failed to parse mission id:', e);
-    }
-
-    return 'unknown';
-  }
-
-  function shouldResetSnapshot(currentMissionId, currentRate, previousSnapshot) {
-    return (
-      currentMissionId !== previousSnapshot.missionId ||
-      currentRate !== previousSnapshot.rewardRate
-    );
-  }
-
-  function computeDelta(stats, totalUSDNumber, count, missionId, rewardRate) {
-    const prev = stats.lastSnapshot || {
-      missionId: null,
-      rewardRate: null,
-      totalUSD: 0,
-      count: 0
-    };
-
-    if (shouldResetSnapshot(missionId, rewardRate, prev)) {
-      stats.lastSnapshot = {
-        missionId,
-        rewardRate,
-        totalUSD: totalUSDNumber,
-        count
-      };
-      return 0;
-    }
-
-    if (count < prev.count) {
-      stats.lastSnapshot = {
-        missionId,
-        rewardRate,
-        totalUSD: totalUSDNumber,
-        count
-      };
-      return 0;
-    }
-
-    const delta = totalUSDNumber - prev.totalUSD;
-
-    stats.lastSnapshot = {
-      missionId,
-      rewardRate,
-      totalUSD: totalUSDNumber,
-      count
-    };
-
-    return delta > 0 ? delta : 0;
-  }
-
-  // ------ Mission reward rate (USD) ------
 
   function getMissionRewardRate() {
-    try {
-      const xpath =
-        "//*[contains(text(), 'USD') and (contains(text(), 'Reward:') or contains(text(), 'Recompensa:'))]";
-      const results = document.evaluate(
-        xpath,
-        document,
-        null,
-        XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
-        null
-      );
+    const bodyText = document.body.innerText || '';
+    const m = bodyText.match(/(?:Reward|Recompensa).*?(\d+(?:\.\d{1,2})?)\s*USD/i);
+    if (m && m[1]) return parseFloat(m[1]);
 
-      for (let i = results.snapshotLength - 1; i >= 0; i--) {
-        const rewardElement = results.snapshotItem(i);
-
-        if (rewardElement && rewardElement.textContent) {
-          const style = window.getComputedStyle(rewardElement);
-          const visible =
-            style.display !== 'none' &&
-            style.visibility !== 'hidden' &&
-            style.opacity !== '0' &&
-            rewardElement.offsetParent !== null;
-
-          if (visible) {
-            const text = rewardElement.textContent;
-            const match =
-              text.match(/Reward:\s*([\d.]+)\s*USD/i) ||
-              text.match(/Recompensa:\s*([\d.]+)\s*USD/i);
-
-            if (match && match[1]) {
-              const rate = parseFloat(match[1]);
-              if (!isNaN(rate)) {
-                return rate;
-              }
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.error('[MXM Mission Tracker] Error fetching reward rate:', e);
+    const el = document.querySelector('[class*="Reward"]');
+    if (el) {
+        const m2 = el.textContent.match(/(\d+(?:\.\d{1,2})?)\s*USD/i);
+        if (m2) return parseFloat(m2[1]);
     }
-
-    return FALLBACK_REWARD_RATE;
+    return 1.0;
   }
 
-  // ------ Read mission count & totals ------
-
-  function calculateGlobalTotal() {
-    let currentRewardRate = FALLBACK_REWARD_RATE;
-    let totalTasksFound = 0;
-
-    try {
-      currentRewardRate = getMissionRewardRate();
-
-      try {
-        const divs = document.querySelectorAll('div');
-        const validDivs = Array.from(divs).filter((div) => {
-          const style = window.getComputedStyle(div);
-          const visible =
-            style.display !== 'none' &&
-            style.visibility !== 'hidden' &&
-            div.offsetParent !== null;
-          return visible && /(?:Concluído|Completed)\s*·\s*\d+/i.test(div.textContent);
-        });
-
-        if (validDivs.length > 0) {
-          const last = validDivs[validDivs.length - 1];
-          const match =
-            last.textContent.match(/Completed\s*·\s*(\d+)/i) ||
-            last.textContent.match(/Concluído\s*·\s*(\d+)/i);
-          if (match) totalTasksFound = parseInt(match[1], 10);
-        }
-      } catch (e) {
-        console.error('[MXM Mission Tracker] Error reading task count:', e);
-        totalTasksFound = 0;
-      }
-
-      const totalUSDNumber = currentRewardRate * totalTasksFound;
-      const totalUSD = totalUSDNumber.toFixed(2);
-
-      return {
-        totalUSD,
-        totalUSDNumber,
-        count: totalTasksFound,
-        rate: currentRewardRate
-      };
-    } catch (e) {
-      console.error('[MXM Mission Tracker] Fatal error in calculateGlobalTotal:', e);
-      return { totalUSD: '0.00', totalUSDNumber: 0, count: 0, rate: currentRewardRate };
-    }
+  function getCurrentMissionId() {
+    const url = window.location.href;
+    const m = url.match(/mission_id=([^&]+)/) || url.match(/\/(?:missions|tasks)\/([a-zA-Z0-9_-]+)/);
+    return m ? m[1] : 'unknown';
   }
 
-  // ------ Currency conversion ------
+  // --- WIDGET UI ---
+  let dragState = null;
 
-  function convertFromUSD(amountUSD, currencyCode) {
-    const cfg = CURRENCIES[currencyCode] || CURRENCIES.USD;
-    return amountUSD * cfg.factorFromUSD;
-  }
+  function createWidget() {
+    let widget = document.getElementById(WIDGET_ID);
+    if (widget) return widget;
 
-  function formatCurrency(amount, currencyCode) {
-    const cfg = CURRENCIES[currencyCode] || CURRENCIES.USD;
-    return `${cfg.symbol}${amount.toFixed(2)} ${currencyCode}`;
-  }
-
-  // ------ Widget creation & updates ------
-
-  function applyMode(widget) {
-    const fullBody = widget.querySelector('.mxm-full-body');
-    const compactBody = widget.querySelector('.mxm-compact-body');
-
-    if (settings.mode === 'compact') {
-      fullBody.style.display = 'none';
-      compactBody.style.display = 'flex';
-      widget.style.minWidth = '190px';
-      widget.style.padding = '8px 14px 10px 14px';
-    } else {
-      fullBody.style.display = 'block';
-      compactBody.style.display = 'none';
-      widget.style.minWidth = '260px';
-      widget.style.padding = '15px 22px 18px 22px';
-    }
-  }
-
-  function createWidget(borderStyle) {
-    const widget = document.createElement('div');
-    widget.id = TOTAL_WIDGET_ID;
-    widget.style.cssText = `
-      position: fixed;
-      top: 80px;
-      right: 20px;
-      z-index: 10001;
-      color: ${WIDGET_TEXT_COLOR};
-      border-radius: 15px;
-      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      text-align: left;
-      cursor: grab;
-      line-height: 1.4;
-      transition: all 0.25s ease;
-      user-select: none;
-      backdrop-filter: blur(6px);
-      background-color: ${WIDGET_BG_COLOR};
-      ${borderStyle}
+    const div = document.createElement('div');
+    div.id = WIDGET_ID;
+    div.style.cssText = `
+      position: fixed; top: 80px; right: 20px; width: 290px;
+      background: #121212; color: #fff; border-top: 4px solid #4caf50;
+      font-family: 'Segoe UI', sans-serif; z-index: 999999;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.8); border-radius: 8px;
+      cursor: grab; user-select: none; font-size: 13px;
     `;
 
-    const closeBtn = document.createElement('div');
-    closeBtn.textContent = '×';
-    closeBtn.className = 'mxm-close-btn';
-    closeBtn.style.cssText = `
-      position: absolute;
-      top: 4px;
-      right: 8px;
-      font-size: 16px;
-      font-weight: bold;
-      cursor: pointer;
-      color: ${WIDGET_TEXT_COLOR};
-    `;
-    closeBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      widget.remove();
-    });
-    widget.appendChild(closeBtn);
-
-    const container = document.createElement('div');
-    container.innerHTML = `
-      <div class="mxm-header" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px;font-size:12px;font-weight:600;">
-        <span>Mission earnings</span>
-        <div style="display:flex;align-items:center;gap:6px;">
-          <img class="mxm-currency-flag" src="${CURRENCIES[settings.currency].flag}" style="width:18px;height:12px;border-radius:2px;box-shadow:0 0 3px rgba(0,0,0,0.4);">
-          <select class="mxm-currency-select" style="background:transparent;border:1px solid #666;border-radius:4px;color:${WIDGET_TEXT_COLOR};font-size:11px;padding:1px 4px;outline:none;">
-            ${SUPPORTED_CURRENCIES.map(
-              (c) => `<option value="${c}">${c}</option>`
-            ).join('')}
-          </select>
-        </div>
+    div.innerHTML = `
+      <div style="padding:10px 12px; display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.08); border-bottom:1px solid #333;">
+        <span style="font-weight:800; font-size:10px; opacity:0.7; letter-spacing:1px; color:#4caf50;">GLOBAL CUMULATIVE WALLET</span>
+        <span id="mxm-cur-flag" style="cursor:pointer; font-size:16px;">🇺🇸</span>
       </div>
 
-      <div class="mxm-compact-body" style="display:none;align-items:center;justify-content:space-between;gap:10px;font-size:12px;">
-        <span class="mxm-compact-label" style="opacity:0.85;">Today</span>
-        <span class="mxm-compact-amount" style="font-weight:700;"></span>
+      <div style="display:grid; grid-template-columns: 1fr 1fr 1.2fr; text-align:center; background:#1a1a1a;">
+        <div style="padding:8px 4px; font-size:9px; color:#666; font-weight:700; border-right:1px solid #222; border-bottom:1px solid #222;">TODAY</div>
+        <div style="padding:8px 4px; font-size:9px; color:#666; font-weight:700; border-right:1px solid #222; border-bottom:1px solid #222;">WEEK</div>
+        <div style="padding:8px 4px; font-size:9px; color:#aaa; font-weight:700; border-bottom:1px solid #222; background:rgba(255,255,255,0.03);">MONTH (TOTAL)</div>
+
+        <div id="val-c-day" style="padding:8px 0 2px 0; font-size:16px; font-weight:bold; border-right:1px solid #222;">0</div>
+        <div id="val-c-week" style="padding:8px 0 2px 0; font-size:16px; font-weight:bold; border-right:1px solid #222;">0</div>
+        <div id="val-c-month" style="padding:8px 0 2px 0; font-size:16px; font-weight:bold; color:#fff; background:rgba(255,255,255,0.03);">0</div>
+
+        <div id="val-m-day" style="padding:2px 0 12px 0; font-size:13px; color:#4caf50; border-right:1px solid #222;">$0</div>
+        <div id="val-m-week" style="padding:2px 0 12px 0; font-size:13px; color:#4caf50; border-right:1px solid #222;">$0</div>
+        <div id="val-m-month" style="padding:2px 0 12px 0; font-size:14px; font-weight:bold; color:#4caf50; background:rgba(255,255,255,0.03);">$0</div>
       </div>
 
-      <div class="mxm-full-body" style="display:block;margin-top:4px;">
-        <div style="font-size:13px;margin-bottom:4px;">
-          <span style="opacity:0.9;">Today:</span>
-          <span class="mxm-today-amount" style="font-weight:700;"></span>
+      <div style="padding:8px 12px; background:#000; font-size:10px; border-top:2px solid #333; border-bottom-left-radius:8px; border-bottom-right-radius:8px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+            <span style="color:#888; font-weight:600;">CURRENT MISSION VALUE</span>
+            <span id="mxm-page-total" style="color:#fff; font-weight:700; font-size:12px;">$0.00</span>
         </div>
-        <div style="font-size:11px;display:flex;flex-direction:column;gap:1px;opacity:0.9;">
-          <div><span style="opacity:0.85;">Week:</span> <span class="mxm-week-amount"></span></div>
-          <div><span style="opacity:0.85;">Month:</span> <span class="mxm-month-amount"></span></div>
-        </div>
-        <div style="font-size:10px;margin-top:5px;opacity:0.8;" class="mxm-footer-line"></div>
+        <div style="text-align:right; font-size:9px; color:#555;">(Page Tasks × Rate)</div>
       </div>
     `;
-    widget.appendChild(container);
 
-    document.body.appendChild(widget);
-
-    const currencySelect = widget.querySelector('.mxm-currency-select');
-    currencySelect.value = settings.currency;
-    currencySelect.addEventListener('click', (e) => e.stopPropagation());
-    currencySelect.addEventListener('change', (e) => {
-      settings.currency = e.target.value;
-      saveSettings(settings);
-      const flagImg = widget.querySelector('.mxm-currency-flag');
-      flagImg.src = CURRENCIES[settings.currency].flag;
+    // Drag Logic
+    div.addEventListener('mousedown', e => {
+      if (e.target.id === 'mxm-cur-flag') return;
+      const rect = div.getBoundingClientRect();
+      dragState = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     });
-
-    widget.addEventListener('click', (e) => {
-      if (e.target.closest('.mxm-close-btn') || e.target.closest('.mxm-currency-select')) {
-        return;
+    document.addEventListener('mouseup', () => dragState = null);
+    document.addEventListener('mousemove', e => {
+      if (dragState) {
+        div.style.left = (e.clientX - dragState.x) + 'px';
+        div.style.top = (e.clientY - dragState.y) + 'px';
       }
-      settings.mode = settings.mode === 'full' ? 'compact' : 'full';
-      saveSettings(settings);
-      applyMode(widget);
     });
 
-    makeDraggable(widget);
-    applyMode(widget);
+    // Currency Toggle
+    div.querySelector('#mxm-cur-flag').addEventListener('click', () => {
+      const s = loadSettings();
+      const k = Object.keys(CURRENCIES);
+      s.currency = k[(k.indexOf(s.currency) + 1) % k.length];
+      saveSettings(s);
+      updateUI();
+    });
 
-    return widget;
+    document.body.appendChild(div);
+    return div;
   }
 
-  function updateWidget() {
-    try {
-      if (!window.location.href.includes('/tasks')) {
-        const existing = document.getElementById(TOTAL_WIDGET_ID);
-        if (existing) existing.remove();
-        return;
-      }
+  // --- LOGIC ---
+  function updateUI() {
+    const widget = createWidget();
+    const stats = loadStats();
+    const settings = loadSettings();
+    const currency = CURRENCIES[settings.currency];
 
-      const now = new Date();
-      stats = ensureStats(stats, now);
+    const count = getCompletedTaskCount() || 0;
+    const rate = getMissionRewardRate() || 1.0;
+    const pageTotal = (count * rate * currency.factor).toFixed(2);
 
-      const { totalUSD, totalUSDNumber, count, rate } = calculateGlobalTotal();
-      const missionId = getCurrentMissionId();
-      const deltaUSD = computeDelta(stats, totalUSDNumber, count, missionId, rate);
+    document.getElementById('mxm-cur-flag').textContent = currency.flag;
+    document.getElementById('mxm-page-total').textContent = `${currency.symbol}${pageTotal}`;
 
-      if (deltaUSD > 0) {
-        stats.day.totalUSD += deltaUSD;
-        stats.week.totalUSD += deltaUSD;
-        stats.month.totalUSD += deltaUSD;
-      }
+    document.getElementById('val-c-day').textContent = stats.counts.day;
+    document.getElementById('val-c-week').textContent = stats.counts.week;
+    document.getElementById('val-c-month').textContent = stats.counts.month;
+
+    document.getElementById('val-m-day').textContent = currency.symbol + (stats.money.day * currency.factor).toFixed(0);
+    document.getElementById('val-m-week').textContent = currency.symbol + (stats.money.week * currency.factor).toFixed(0);
+    document.getElementById('val-m-month').textContent = currency.symbol + (stats.money.month * currency.factor).toFixed(0);
+  }
+
+  function check() {
+    const isTaskPage = /\/(tasks|missions)\//.test(window.location.pathname);
+    const widget = createWidget();
+    if (!isTaskPage) { widget.style.display = 'none'; return; }
+    widget.style.display = 'block';
+
+    const count = getCompletedTaskCount();
+    const rate = getMissionRewardRate();
+    const missionId = getCurrentMissionId();
+    const stats = loadStats();
+
+    updateUI();
+
+    if (count === null || missionId === 'unknown') return;
+
+    if (stats.lastGlobalCount === null || stats.lastMissionId !== missionId) {
+      stats.lastGlobalCount = count;
+      stats.lastMissionId = missionId;
+      stats.lastRate = rate;
       saveStats(stats);
+      return;
+    }
 
-      const isGoalAchieved = totalUSDNumber >= 50.0;
-      const borderStyle = isGoalAchieved
-        ? `border: 3px solid ${BORDER_COLOR_SUCCESS};`
-        : `border: 3px solid ${BORDER_COLOR_PENDING};`;
+    const delta = count - stats.lastGlobalCount;
 
-      let widget = document.getElementById(TOTAL_WIDGET_ID);
+    if (delta > 0 && delta <= HUMAN_SPEED_LIMIT) {
+      const earned = delta * rate;
 
-      if (!widget || !document.body.contains(widget)) {
-        if (widget) widget.remove();
-        widget = createWidget(borderStyle);
-      } else {
-        widget.style.setProperty(
-          'border',
-          isGoalAchieved
-            ? `3px solid ${BORDER_COLOR_SUCCESS}`
-            : `3px solid ${BORDER_COLOR_PENDING}`
-        );
-      }
+      stats.counts.day += delta;
+      stats.counts.week += delta;
+      stats.counts.month += delta;
 
-      const currency = settings.currency;
-      const cfg = CURRENCIES[currency];
+      stats.money.day += earned;
+      stats.money.week += earned;
+      stats.money.month += earned;
 
-      const todayConverted = convertFromUSD(stats.day.totalUSD, currency);
-      const weekConverted = convertFromUSD(stats.week.totalUSD, currency);
-      const monthConverted = convertFromUSD(stats.month.totalUSD, currency);
-
-      const todayElement = widget.querySelector('.mxm-today-amount');
-      const weekElement = widget.querySelector('.mxm-week-amount');
-      const monthElement = widget.querySelector('.mxm-month-amount');
-      const footerLine = widget.querySelector('.mxm-footer-line');
-      const compactAmount = widget.querySelector('.mxm-compact-amount');
-      const currencyFlag = widget.querySelector('.mxm-currency-flag');
-
-      if (todayElement) {
-        todayElement.textContent = formatCurrency(todayConverted, currency);
-      }
-      if (compactAmount) {
-        compactAmount.textContent = formatCurrency(todayConverted, currency);
-      }
-      if (weekElement) {
-        weekElement.textContent = formatCurrency(weekConverted, currency);
-      }
-      if (monthElement) {
-        monthElement.textContent = formatCurrency(monthConverted, currency);
-      }
-      if (footerLine) {
-        footerLine.textContent = `On-page total: $${totalUSD} USD · ${count} tasks · Rate: $${rate.toFixed(
-          2
-        )} USD`;
-      }
-      if (currencyFlag) {
-        currencyFlag.src = cfg.flag;
-      }
-    } catch (e) {
-      console.error('[MXM Mission Tracker] Fatal error in updateWidget:', e);
+      stats.lastGlobalCount = count;
+      stats.lastRate = rate;
+      saveStats(stats);
+      updateUI();
+    } else if (delta !== 0) {
+      stats.lastGlobalCount = count;
+      stats.lastRate = rate;
+      saveStats(stats);
     }
   }
 
-  // ------ Init ------
+  setInterval(check, UPDATE_INTERVAL);
+  check();
 
-  try {
-    setTimeout(() => {
-      updateWidget();
-      setInterval(updateWidget, 2000);
-    }, 1000);
-  } catch (e) {
-    console.error('[MXM Mission Tracker] Error starting timers:', e);
-  }
 })();
