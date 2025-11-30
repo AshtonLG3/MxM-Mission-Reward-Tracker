@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         MxM Mission Reward Tracker (Final Merge v6.0)
+// @name         MxM Mission Reward Tracker (Fix v6.2.1)
 // @namespace    mxm-tools
-// @version      6.0.1
-// @description  v5.2.0 Day/Week Logic + v5.4.0 Portfolio Total (Best of both worlds).
+// @version      6.2.1
+// @description  v6.2.0 Base + Critical Variable Reference Fix (CURRENCIES -> RATES).
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
 // @match        https://curators-beta.musixmatch.com/*
@@ -12,24 +12,41 @@
 
 (function () {
   'use strict';
-  console.log('[MXM Tracker v6.0] Final Merge Active');
+  console.log('[MXM Tracker v6.2.1] Reference Fix Applied');
 
   // --- CONFIG ---
   const WIDGET_ID = 'mxm-dashboard-widget';
   const UPDATE_INTERVAL = 1000;
   const HUMAN_SPEED_LIMIT = 2;
 
-  // RATES (Nov 30, 2025)
-  const CURRENCIES = {
-    USD: { symbol: '$', factor: 1, flag: '🇺🇸' },
-    ZAR: { symbol: 'R', factor: 17.11, flag: '🇿🇦' },
-    EUR: { symbol: '€', factor: 0.86, flag: '🇪🇺' },
-    NGN: { symbol: '₦', factor: 1441, flag: '🇳🇬' },
-    KES: { symbol: 'KSh', factor: 129, flag: '🇰🇪' }
+  // RATES (Fallback values, updated via API)
+  let RATES = {
+    USD: 1,
+    ZAR: 17.11,
+    EUR: 0.86,
+    NGN: 1441,
+    KES: 129
   };
 
   const SETTINGS_KEY = 'mxmSettings_v6';
-  const STATS_KEY = 'mxmStats_v6'; // New key to ensure clean slate
+  const STATS_KEY = 'mxmStats_v6';
+
+  // --- 1. LIVE RATES FETCHER ---
+  async function updateRates() {
+    try {
+      const response = await fetch('https://open.er-api.com/v6/latest/USD');
+      const data = await response.json();
+      if (data && data.rates) {
+        RATES.USD = 1;
+        if (data.rates.ZAR) RATES.ZAR = data.rates.ZAR;
+        if (data.rates.EUR) RATES.EUR = data.rates.EUR;
+        if (data.rates.NGN) RATES.NGN = data.rates.NGN;
+        if (data.rates.KES) RATES.KES = data.rates.KES;
+        const widget = document.getElementById(WIDGET_ID);
+        if (widget) updateUI();
+      }
+    } catch (e) {}
+  }
 
   // --- DATE HELPERS ---
   function getIds() {
@@ -54,14 +71,19 @@
         ids: ids,
         counts: { day: 0, week: 0 },
         money: { day: 0, week: 0 },
-        portfolio: {}, // Registry: { "mission_id": { usd: 618.00, tasks: 206 } }
+        portfolio: {},
         lastGlobalCount: null,
         lastMissionId: null,
         lastRate: 1.0
       };
     }
 
-    // STRICT v5.2.0 RESET LOGIC for Day/Week
+    // Number Enforcer
+    s.counts.day = Number(s.counts.day) || 0;
+    s.counts.week = Number(s.counts.week) || 0;
+    s.money.day = Number(s.money.day) || 0;
+    s.money.week = Number(s.money.week) || 0;
+
     if (s.ids.dayId !== ids.dayId) {
       s.counts.day = 0; s.money.day = 0;
       s.ids.dayId = ids.dayId;
@@ -82,7 +104,7 @@
   }
   function saveSettings(s) { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
 
-  // --- DOM PARSING (v5.2.0 Strict) ---
+  // --- DOM PARSING ---
   function getCompletedTaskCount() {
     const patterns = [
         /(?:Completed|Concluído|Terminé|Completado)\s*[·•]\s*(\d+)/i,
@@ -159,7 +181,7 @@
         <div style="padding:8px 4px; font-size:9px; color:#666; font-weight:700; border-right:1px solid #222; border-bottom:1px solid #222;">WEEK</div>
         <div style="padding:8px 4px; font-size:9px; color:#aaa; font-weight:700; border-bottom:1px solid #222; background:rgba(255,255,255,0.03);">PORTFOLIO</div>
 
-        <div id="val-c-day" style="padding:8px 0 2px 0; font-size:16px; font-weight:bold; border-right:1px solid #222;">0</div>
+        <div id="val-c-day" style="padding:8px 0 2px 0; font-size:16px; font-weight:bold; border-right:1px solid #222; transition: color 0.5s;">0</div>
         <div id="val-c-week" style="padding:8px 0 2px 0; font-size:16px; font-weight:bold; border-right:1px solid #222;">0</div>
         <div id="val-c-total" style="padding:8px 0 2px 0; font-size:16px; font-weight:bold; color:#fff; background:rgba(255,255,255,0.03);">0</div>
 
@@ -192,7 +214,7 @@
 
     div.querySelector('#mxm-cur-flag').addEventListener('click', () => {
       const s = loadSettings();
-      const keys = Object.keys(CURRENCIES);
+      const keys = Object.keys(RATES);
       s.currency = keys[(keys.indexOf(s.currency) + 1) % keys.length];
       saveSettings(s);
       updateUI();
@@ -202,30 +224,50 @@
     return div;
   }
 
-  // --- LOGIC ---
+  function flashGreen() {
+      const el = document.getElementById('val-c-day');
+      if(el) {
+          el.style.color = '#00ff00';
+          setTimeout(()=> el.style.color = '', 400);
+      }
+  }
+
+  // --- LOGIC (The Fix) ---
   function updateUI() {
     const widget = createWidget();
     const stats = loadStats();
     const settings = loadSettings();
-    const currency = CURRENCIES[settings.currency];
+
+    // THE FIX: Dynamic currency object construction
+    const currency = {
+        symbol: settings.currency === "USD" ? "$" :
+                settings.currency === "ZAR" ? "R" :
+                settings.currency === "EUR" ? "€" :
+                settings.currency === "NGN" ? "₦" :
+                settings.currency === "KES" ? "KSh" : "$",
+        factor: RATES[settings.currency] || 1,
+        flag:
+          settings.currency === "USD" ? "🇺🇸" :
+          settings.currency === "ZAR" ? "🇿🇦" :
+          settings.currency === "EUR" ? "🇪🇺" :
+          settings.currency === "NGN" ? "🇳🇬" :
+          settings.currency === "KES" ? "🇰🇪" : "🇺🇸"
+    };
 
     const count = getCompletedTaskCount() || 0;
     const rate = getMissionRewardRate() || 1.0;
     const pageTotal = (count * rate * currency.factor).toFixed(2);
 
-    // Calculate Portfolio (Sum of all stored missions)
     const portfolio = getPortfolioTotal(stats);
 
     document.getElementById('mxm-cur-flag').textContent = currency.flag;
     document.getElementById('mxm-page-total').textContent = `${currency.symbol}${pageTotal}`;
 
-    // Columns 1 & 2 (v5.2.0 Logic: Incremental Work)
     document.getElementById('val-c-day').textContent = stats.counts.day;
     document.getElementById('val-c-week').textContent = stats.counts.week;
     document.getElementById('val-m-day').textContent = currency.symbol + (stats.money.day * currency.factor).toFixed(0);
     document.getElementById('val-m-week').textContent = currency.symbol + (stats.money.week * currency.factor).toFixed(0);
 
-    // Column 3 (New Logic: Portfolio Total)
     document.getElementById('val-c-total').textContent = portfolio.tasks;
     document.getElementById('val-m-total').textContent = currency.symbol + (portfolio.usd * currency.factor).toFixed(0);
   }
@@ -245,12 +287,10 @@
 
     if (count === null || missionId === 'unknown') return;
 
-   // --- Portfolio safer initialization ---
-if (!stats.portfolio[missionId]) {
-    stats.portfolio[missionId] = { usd: 0, tasks: 0 };
-}
+    if (count > 0) {
+        stats.portfolio[missionId] = { usd: count * rate, tasks: count };
+    }
 
-    // --- 2. Update Incremental Stats (v5.2.0 logic) ---
     if (stats.lastGlobalCount === null || stats.lastMissionId !== missionId) {
       stats.lastGlobalCount = count;
       stats.lastMissionId = missionId;
@@ -263,11 +303,7 @@ if (!stats.portfolio[missionId]) {
 
     if (delta > 0 && delta <= HUMAN_SPEED_LIMIT) {
       const earned = delta * rate;
-        // Portfolio increment (only new work)
-stats.portfolio[missionId].tasks += delta;
-stats.portfolio[missionId].usd += earned;
 
-      // Update Day/Week (New Work Only)
       stats.counts.day += delta;
       stats.counts.week += delta;
       stats.money.day += earned;
@@ -275,18 +311,23 @@ stats.portfolio[missionId].usd += earned;
 
       stats.lastGlobalCount = count;
       stats.lastRate = rate;
+
       saveStats(stats);
+      flashGreen();
       updateUI();
     } else if (delta !== 0) {
       stats.lastGlobalCount = count;
       stats.lastRate = rate;
       saveStats(stats);
+      updateUI();
     } else {
-        // Just save in case portfolio updated
         saveStats(stats);
     }
   }
 
+  // Init
+  updateRates();
+  setInterval(updateRates, 3600000);
   setInterval(check, UPDATE_INTERVAL);
   check();
 
