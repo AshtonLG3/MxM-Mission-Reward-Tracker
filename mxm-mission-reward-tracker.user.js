@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         MxM Mission Reward Tracker (v6.6.0 Stable)
+// @name         MxM Mission Reward Tracker (v6.6.1 Stable)
 // @namespace    mxm-tools
-// @version      6.6.0
+// @version      6.6.1
 // @description  Day/Week counters + Portfolio + Live FX + Cross-Tab Sync (No Notion)
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
@@ -12,7 +12,7 @@
 
 (function () {
   'use strict';
-  console.log('[MXM Tracker v6.6.0] FX + Sync + Stability Fixes');
+  console.log('[MXM Tracker v6.6.1] FX + Sync + Stability Fixes');
 
   // --- CONFIG ---
   const WIDGET_ID = 'mxm-dashboard-widget';
@@ -32,7 +32,10 @@
   };
 
   const SETTINGS_KEY = 'mxmSettings_v6';
-  const STATS_KEY = 'mxmStats_v6';
+  const STATS_KEY = 'mxmStats_v7';
+
+  // Drop corrupted stats from the previous version
+  localStorage.removeItem('mxmStats_v6');
 
   const FX_API_URL = 'https://open.er-api.com/v6/latest/USD';
   const FX_UPDATE_INTERVAL = 24 * 60 * 60 * 1000; // 1 day
@@ -371,7 +374,6 @@
     const isTaskPage = /\/(tasks|missions)\//.test(window.location.pathname);
     const widget = createWidget();
     if (!widget) return;
-
     if (!isTaskPage) {
       widget.style.display = 'none';
       return;
@@ -382,75 +384,69 @@
     const rate = getMissionRewardRate();
     const missionId = getCurrentMissionId();
     const stats = loadStats();
-
     updateUI();
 
     if (count === null || missionId === 'unknown') return;
 
-    // Ensure portfolio entry exists
+    // Ensure portfolio entry
     if (!stats.portfolio[missionId]) {
       stats.portfolio[missionId] = { usd: 0, tasks: 0 };
     }
 
-    // --- SCENARIO 1: NEW MISSION DETECTED ---
+    // ─────────────────────────────────────
+    // 1. Mission changed → reset baseline
+    // ─────────────────────────────────────
     if (stats.lastMissionId !== missionId) {
-      // If we switch to a mission that already has progress, we assume that progress
-      // is OLD (already paid), unless our local portfolio knows nothing about it.
       if (count > 0 && stats.portfolio[missionId].tasks === 0) {
-        // This is the ONLY time we trust an initial high count (first load ever)
+        // First time ever seeing this mission with progress → seed it
         stats.portfolio[missionId].tasks = count;
         stats.portfolio[missionId].usd = count * rate;
       }
-      // Re-baseline immediately so we don't double count
       stats.lastGlobalCount = count;
       stats.lastMissionId = missionId;
       stats.lastRate = rate;
       saveStats(stats);
-      updateUI();
       return;
     }
 
-   // Fix: Prevent false drops (MXM "0" reload glitch)
-if (stats.lastGlobalCount === null) {
-  stats.lastGlobalCount = count;
-  stats.lastRate = rate;
-  saveStats(stats);
-  return;
-}
+    // ─────────────────────────────────────
+    // 2. Same mission – first stable read after load/reload
+    // ─────────────────────────────────────
+    if (stats.lastGlobalCount === null) {
+      stats.lastGlobalCount = count;
+      stats.lastRate = rate;
+      saveStats(stats);
+      return;
+    }
 
-// NEW FIX: Reject lower counts (glitch 0 → real 1)
-if (count < stats.lastGlobalCount) {
-  console.log(`[MXM Tracker] Ignored false drop ${stats.lastGlobalCount} → ${count}`);
-  return; // DO NOT update baseline, DO NOT compute delta
-}
+    // ─────────────────────────────────────
+    // 3. Glitch protection – ignore drops
+    // ─────────────────────────────────────
+    if (count < stats.lastGlobalCount) {
+      console.log(`[MXM Tracker] Ignored glitch drop ${stats.lastGlobalCount} → ${count}`);
+      return;
+    }
 
-const delta = count - stats.lastGlobalCount;
+    // ─────────────────────────────────────
+    // 4. Only accept genuine forward progress
+    // ─────────────────────────────────────
+    const delta = count - stats.lastGlobalCount;
 
     if (delta > 0 && delta <= HUMAN_SPEED_LIMIT) {
-      // VALID PROGRESS: Count went UP
       const earned = delta * rate;
-
       stats.portfolio[missionId].tasks += delta;
       stats.portfolio[missionId].usd += earned;
-
       stats.counts.day += delta;
       stats.counts.week += delta;
       stats.money.day += earned;
       stats.money.week += earned;
 
-      stats.lastGlobalCount = count;
+      stats.lastGlobalCount = count;       // ← ONLY update baseline when we actually accepted tasks
       stats.lastRate = rate;
-
       saveStats(stats);
       updateUI();
-    } else if (delta < 0) {
-      // --- THE FIX ---
-      // The count dropped (e.g. 10 -> 0).
-      // This is usually a DOM glitch during reload. IGNORE IT.
-      // Do NOT update stats.lastGlobalCount to the lower number.
-      console.log(`[MXM Tracker] Count dropped (${stats.lastGlobalCount} -> ${count}). Ignoring glitch.`);
     }
-    // If delta is 0, do nothing.
+    // delta ≤ 0 or too big → silently ignored (this is what kills the +2 on every reload)
   }
 
   // --- MUTATION OBSERVER + DEBOUNCE ---
