@@ -1,26 +1,24 @@
 // ==UserScript==
-// @name         MxM Mission Reward Tracker (Final Merge v6.4.0)
+// @name         MxM Mission Reward Tracker (v6.6.0 Stable)
 // @namespace    mxm-tools
-// @version      6.4.0
-// @description  v5.2.0 Day/Week Logic + Portfolio (One-Time Populate + Deltas) + Export/Reset + Live FX + Cross-Tab Sync.
+// @version      6.6.0
+// @description  Day/Week counters + Portfolio + Live FX + Cross-Tab Sync (No Notion)
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
 // @match        https://curators-beta.musixmatch.com/*
-// @downloadURL   https://raw.githubusercontent.com/AshtonLG3/MxM-Mission-Reward-Tracker/main/MxM-Tracker.user.js
-// @updateURL     https://raw.githubusercontent.com/AshtonLG3/MxM-Mission-Reward-Tracker/main/MxM-Tracker.meta.js
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
 
 (function () {
   'use strict';
-  console.log('[MXM Tracker v6.4.0] v6.3.0 base + Live FX + sync/safety');
+  console.log('[MXM Tracker v6.6.0] FX + Sync + Stability Fixes');
 
   // --- CONFIG ---
   const WIDGET_ID = 'mxm-dashboard-widget';
-  const HUMAN_SPEED_LIMIT = 2;
+  const HUMAN_SPEED_LIMIT = 2; // Max tasks possible in one check interval
 
-  // Brand colors (from In-Editor Formatter banner)
+  // Brand colors
   const COLOR_NAVY_DARK = '#0b1018';
   const COLOR_GOLD = '#d4af37';
 
@@ -61,22 +59,21 @@
   }
 
   // --- DATE HELPERS ---
- function getIds() {
-  const now = new Date();
+  function getIds() {
+    const now = new Date();
 
-  // Day ID (resets every midnight)
-  const dayId = now.toLocaleDateString('en-CA');
+    // Day ID (resets every midnight)
+    const dayId = now.toLocaleDateString('en-CA');
 
-  // --- WEEK LOGIC (Monday → Sunday) ---
-  const d = new Date(now);
-  const day = d.getDay(); // 0 = Sun, 1 = Mon, ...
-  const mondayOffset = (day === 0 ? -6 : 1 - day); // Move to Monday
-  const monday = new Date(d.setDate(d.getDate() + mondayOffset));
+    // Week logic (Monday → Sunday)
+    const d = new Date(now);
+    const day = d.getDay(); // 0 = Sun, 1 = Mon, ...
+    const mondayOffset = (day === 0 ? -6 : 1 - day); // Move to Monday
+    const monday = new Date(d.setDate(d.getDate() + mondayOffset));
+    const weekId = monday.toLocaleDateString('en-CA');
 
-  const weekId = monday.toLocaleDateString('en-CA');
-
-  return { dayId, weekId };
-}
+    return { dayId, weekId };
+  }
 
   // --- STORAGE ---
   function loadStats() {
@@ -101,18 +98,17 @@
     s.money.day   = Number(s.money.day)   || 0;
     s.money.week  = Number(s.money.week)  || 0;
 
-    // Day/Week reset (portfolio is never reset automatically)
+    // Day/Week reset (portfolio never auto-reset)
     if (s.ids.dayId !== ids.dayId) {
       s.counts.day = 0;
       s.money.day = 0;
       s.ids.dayId = ids.dayId;
-      s.lastGlobalCount = null; // force re-baseline for incremental logic
+      s.lastGlobalCount = null; // force re-baseline
     }
     if (s.ids.weekId !== ids.weekId) {
       s.counts.week = 0;
       s.money.week = 0;
       s.ids.weekId = ids.weekId;
-      // lastGlobalCount intentionally left as-is
     }
 
     return s;
@@ -134,7 +130,7 @@
     safeSetItem(SETTINGS_KEY, JSON.stringify(s));
   }
 
-  // --- DOM PARSING (same logic as v6.3.0) ---
+  // --- DOM PARSING ---
   function getCompletedTaskCount() {
     const patterns = [
       /(?:Completed|Concluído|Terminé|Completado)\s*[·•]\s*(\d+)/i,
@@ -314,7 +310,6 @@
   function resetPortfolio() {
     const stats = loadStats();
     stats.portfolio = {};
-    // Day/week stay as-is; this is a pure portfolio wipe
     saveStats(stats);
     updateUI();
   }
@@ -397,13 +392,16 @@
       stats.portfolio[missionId] = { usd: 0, tasks: 0 };
     }
 
-    // --- FIRST VISIT / MISSION SWITCH (with stable/beta sync) ---
+    // --- SCENARIO 1: NEW MISSION DETECTED ---
     if (stats.lastMissionId !== missionId) {
-      // New mission: if portfolio slot still zero, populate from absolute
+      // If we switch to a mission that already has progress, we assume that progress
+      // is OLD (already paid), unless our local portfolio knows nothing about it.
       if (count > 0 && stats.portfolio[missionId].tasks === 0) {
+        // This is the ONLY time we trust an initial high count (first load ever)
         stats.portfolio[missionId].tasks = count;
         stats.portfolio[missionId].usd = count * rate;
       }
+      // Re-baseline immediately so we don't double count
       stats.lastGlobalCount = count;
       stats.lastMissionId = missionId;
       stats.lastRate = rate;
@@ -412,24 +410,29 @@
       return;
     }
 
-    // Same mission but state lost (reload / day reset) – just re-baseline without touching portfolio
-    if (stats.lastGlobalCount === null) {
-      stats.lastGlobalCount = count;
-      stats.lastRate = rate;
-      saveStats(stats);
-      return;
-    }
+   // Fix: Prevent false drops (MXM "0" reload glitch)
+if (stats.lastGlobalCount === null) {
+  stats.lastGlobalCount = count;
+  stats.lastRate = rate;
+  saveStats(stats);
+  return;
+}
 
-    const delta = count - stats.lastGlobalCount;
+// NEW FIX: Reject lower counts (glitch 0 → real 1)
+if (count < stats.lastGlobalCount) {
+  console.log(`[MXM Tracker] Ignored false drop ${stats.lastGlobalCount} → ${count}`);
+  return; // DO NOT update baseline, DO NOT compute delta
+}
+
+const delta = count - stats.lastGlobalCount;
 
     if (delta > 0 && delta <= HUMAN_SPEED_LIMIT) {
+      // VALID PROGRESS: Count went UP
       const earned = delta * rate;
 
-      // Portfolio: add only the delta (incremental)
       stats.portfolio[missionId].tasks += delta;
       stats.portfolio[missionId].usd += earned;
 
-      // Day/Week incremental
       stats.counts.day += delta;
       stats.counts.week += delta;
       stats.money.day += earned;
@@ -440,15 +443,14 @@
 
       saveStats(stats);
       updateUI();
-    } else if (delta !== 0) {
-      // Jump or backwards adjustment – do not change day/week, only re-baseline
-      stats.lastGlobalCount = count;
-      stats.lastRate = rate;
-      saveStats(stats);
-    } else {
-      // No change – but persist any possible corrections
-      saveStats(stats);
+    } else if (delta < 0) {
+      // --- THE FIX ---
+      // The count dropped (e.g. 10 -> 0).
+      // This is usually a DOM glitch during reload. IGNORE IT.
+      // Do NOT update stats.lastGlobalCount to the lower number.
+      console.log(`[MXM Tracker] Count dropped (${stats.lastGlobalCount} -> ${count}). Ignoring glitch.`);
     }
+    // If delta is 0, do nothing.
   }
 
   // --- MUTATION OBSERVER + DEBOUNCE ---
