@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         MxM Mission Reward Tracker (v6.7.0 Stable)
+// @name         MxM Mission Reward Tracker (v6.8.0 Stable)
 // @namespace    mxm-tools
-// @version      6.7.0
+// @version      6.8.0
 // @description  Day/Week counters + Portfolio + Live FX + Cross-Tab Sync (No Notion)
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
@@ -12,7 +12,7 @@
 
 (function () {
   'use strict';
-  console.log('[MXM Tracker v6.7.0] FX + Sync + Stability Fixes');
+  console.log('[MXM Tracker v6.8.0] FX + Sync + Stability Fixes');
 
   // --- CONFIG ---
   const WIDGET_ID = 'mxm-dashboard-widget';
@@ -184,6 +184,14 @@
   }
 
   // --- WIDGET UI ---
+  const FLAG_ISO = {
+    USD: "us",
+    ZAR: "za",
+    EUR: "eu",
+    NGN: "ng",
+    KES: "ke"
+  };
+
   let dragState = null;
 
   function createWidget() {
@@ -204,10 +212,17 @@
 
     div.innerHTML = `
       <div style="padding:10px 12px; display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.7); border-top-left-radius:10px; border-top-right-radius:10px;">
-        <span style="font-weight:800; font-size:10px; letter-spacing:1px; color:${COLOR_GOLD}; text-transform:uppercase;">Global Wallet</span>
+        <span id="mxm-compact-day" 
+              style="font-weight:800; font-size:10px; letter-spacing:1px; color:${COLOR_GOLD}; text-transform:uppercase;">
+           0 Today
+        </span>
         <div style="display:flex; align-items:center; gap:6px;">
           <span id="mxm-top-cur" style="font-size:11px; opacity:0.85;">USD</span>
-          <span id="mxm-cur-flag" style="cursor:pointer; font-size:18px;">🇺🇸</span>
+          <img id="mxm-cur-flag" 
+               src="https://flagcdn.com/us.svg"
+               style="cursor:pointer; width:22px; height:16px; border-radius:2px;" />
+          <span id="mxm-toggle-view" 
+                style="cursor:pointer; font-size:14px; opacity:0.8; padding-left:4px;">▣</span>
         </div>
       </div>
 
@@ -257,6 +272,27 @@
       if (dragState) {
         div.style.left = (e.clientX - dragState.x) + 'px';
         div.style.top = (e.clientY - dragState.y) + 'px';
+      }
+    });
+
+    // --- COMPACT / FULL TOGGLE ---
+    let compact = false;
+
+    div.querySelector('#mxm-toggle-view').addEventListener('click', e => {
+      compact = !compact;
+      div.style.height = compact ? '60px' : 'auto';
+      div.style.overflow = compact ? 'hidden' : 'visible';
+
+      // Hide main grid and mission section in compact mode
+      const grid = div.querySelector('div[style*="grid-template-columns"]');
+      const footer = div.querySelector('div[style*="MISSION VALUE"]')?.parentElement;
+
+      if (compact) {
+        if (grid) grid.style.display = 'none';
+        if (footer) footer.style.display = 'none';
+      } else {
+        if (grid) grid.style.display = 'grid';
+        if (footer) footer.style.display = 'block';
       }
     });
 
@@ -348,9 +384,11 @@
 
     const portfolio = getPortfolioTotal(stats);
 
-    updateTextIfChanged('mxm-cur-flag', currency.flag);
+    const flagEl = document.getElementById('mxm-cur-flag');
+    if (flagEl) flagEl.src = `https://flagcdn.com/${FLAG_ISO[settings.currency]}.svg`;
     updateTextIfChanged('mxm-top-cur', settings.currency);
     updateTextIfChanged('mxm-page-total', `${currency.symbol}${pageTotal}`);
+    updateTextIfChanged('mxm-compact-day', `${stats.counts.day} Today`);
 
     updateTextIfChanged('val-c-day', stats.counts.day);
     updateTextIfChanged('val-c-week', stats.counts.week);
