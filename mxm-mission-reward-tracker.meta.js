@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         MxM Mission Reward Tracker (v6.6.1 Stable)
+// @name         MxM Mission Reward Tracker (v6.7.0 Stable)
 // @namespace    mxm-tools
-// @version      6.6.1
+// @version      6.7.0
 // @description  Day/Week counters + Portfolio + Live FX + Cross-Tab Sync (No Notion)
 // @match        https://curators.musixmatch.com/*
 // @match        https://curators-beta.musixmatch.com/*

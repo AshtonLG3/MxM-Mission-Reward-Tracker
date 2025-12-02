@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         MxM Mission Reward Tracker (v6.6.1 Stable)
+// @name         MxM Mission Reward Tracker (v6.7.0 Stable)
 // @namespace    mxm-tools
-// @version      6.6.1
+// @version      6.7.0
 // @description  Day/Week counters + Portfolio + Live FX + Cross-Tab Sync (No Notion)
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
@@ -12,11 +12,11 @@
 
 (function () {
   'use strict';
-  console.log('[MXM Tracker v6.6.1] FX + Sync + Stability Fixes');
+  console.log('[MXM Tracker v6.7.0] FX + Sync + Stability Fixes');
 
   // --- CONFIG ---
   const WIDGET_ID = 'mxm-dashboard-widget';
-  const HUMAN_SPEED_LIMIT = 2; // Max tasks possible in one check interval
+  const HUMAN_SPEED_LIMIT = 1; // Max tasks possible in one check interval
 
   // Brand colors
   const COLOR_NAVY_DARK = '#0b1018';
