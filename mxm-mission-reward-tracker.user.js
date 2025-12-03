@@ -8,6 +8,8 @@
 // @match        https://curators-beta.musixmatch.com/*
 // @run-at       document-idle
 // @grant        none
+// @downloadURL   https://raw.githubusercontent.com/AshtonLG3/MxM-Mission-Reward-Tracker/main/MxM-Tracker.user.js
+// @updateURL     https://raw.githubusercontent.com/AshtonLG3/MxM-Mission-Reward-Tracker/main/MxM-Tracker.meta.js
 // ==/UserScript==
 
 (function () {
