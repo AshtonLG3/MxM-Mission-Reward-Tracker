@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         MxM Mission Reward Tracker (v6.8.0 Stable)
+// @name         MxM Mission Reward Tracker (v6.9.0 Stable)
 // @namespace    mxm-tools
-// @version      6.8.0
+// @version      6.9.0
 // @description  Day/Week counters + Portfolio + Live FX + Cross-Tab Sync (No Notion)
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
@@ -12,11 +12,11 @@
 
 (function () {
   'use strict';
-  console.log('[MXM Tracker v6.8.0] FX + Sync + Stability Fixes');
+  console.log('[MXM Tracker v6.9.0] FX + Sync + Stability Fixes');
 
   // --- CONFIG ---
   const WIDGET_ID = 'mxm-dashboard-widget';
-  const HUMAN_SPEED_LIMIT = 1; // Max tasks possible in one check interval
+  const HUMAN_SPEED_LIMIT = 5; // INCREASED FROM 1 TO PREVENT "LOCKOUTS"
 
   // Brand colors
   const COLOR_NAVY_DARK = '#0b1018';
@@ -431,12 +431,10 @@
       stats.portfolio[missionId] = { usd: 0, tasks: 0 };
     }
 
-    // ─────────────────────────────────────
-    // 1. Mission changed → reset baseline
-    // ─────────────────────────────────────
-    if (stats.lastMissionId !== missionId) {
-      if (count > 0 && stats.portfolio[missionId].tasks === 0) {
-        // First time ever seeing this mission with progress → seed it
+    // 1. Mission changed OR First Run → Reset Baseline
+    if (stats.lastMissionId !== missionId || stats.lastGlobalCount === null) {
+      // If this is a new mission and we have a count, seed the portfolio if empty
+      if (stats.lastMissionId !== missionId && count > 0 && stats.portfolio[missionId].tasks === 0) {
         stats.portfolio[missionId].tasks = count;
         stats.portfolio[missionId].usd = count * rate;
       }
@@ -447,47 +445,40 @@
       return;
     }
 
-    // ─────────────────────────────────────
-    // 2. Same mission – first stable read after load/reload
-    // ─────────────────────────────────────
-    if (stats.lastGlobalCount === null) {
-      stats.lastGlobalCount = count;
-      stats.lastRate = rate;
-      saveStats(stats);
-      return;
-    }
-
-    // ─────────────────────────────────────
-    // 3. Glitch protection – ignore drops
-    // ─────────────────────────────────────
+    // 2. Glitch protection (Count dropped?)
     if (count < stats.lastGlobalCount) {
-      console.log(`[MXM Tracker] Ignored glitch drop ${stats.lastGlobalCount} → ${count}`);
+      // Allow a reset if the drop is massive (e.g. page bug), otherwise ignore
+      console.log(`[MXM Tracker] Count dropped ${stats.lastGlobalCount} -> ${count}. Ignoring.`);
       return;
     }
 
-    // ─────────────────────────────────────
-    // 4. Only accept genuine forward progress
-    // ─────────────────────────────────────
+    // 3. Calculate Progress
     const delta = count - stats.lastGlobalCount;
 
-    if (delta > 0 && delta <= HUMAN_SPEED_LIMIT) {
-      const earned = delta * rate;
-      stats.portfolio[missionId].tasks += delta;
-      stats.portfolio[missionId].usd += earned;
-      stats.counts.day += delta;
-      stats.counts.week += delta;
-      stats.money.day += earned;
-      stats.money.week += earned;
+    if (delta > 0) {
+      // SAFETY CHECK: Only pay out if the jump is reasonable
+      if (delta <= HUMAN_SPEED_LIMIT) {
+        const earned = delta * rate;
+        stats.portfolio[missionId].tasks += delta;
+        stats.portfolio[missionId].usd += earned;
+        stats.counts.day += delta;
+        stats.counts.week += delta;
+        stats.money.day += earned;
+        stats.money.week += earned;
+      } else {
+        console.warn(`[MXM Tracker] Huge jump detected (${delta}). Updating baseline but skipping reward.`);
+      }
 
-      stats.lastGlobalCount = count;       // ← ONLY update baseline when we actually accepted tasks
+      // CRITICAL FIX: Always update the baseline if the count went up.
+      // This prevents the "infinite freeze" if a jump was too big.
+      stats.lastGlobalCount = count;
       stats.lastRate = rate;
       saveStats(stats);
       updateUI();
     }
-    // delta ≤ 0 or too big → silently ignored (this is what kills the +2 on every reload)
   }
 
-  // --- MUTATION OBSERVER + DEBOUNCE ---
+  // --- MUTATION OBSERVER + HEARTBEAT ---
   let mutationTimeout = null;
   function scheduleCheck() {
     if (mutationTimeout) clearTimeout(mutationTimeout);
@@ -496,6 +487,10 @@
 
   const observer = new MutationObserver(scheduleCheck);
   observer.observe(document.body, { childList: true, subtree: true });
+
+  // HEARTBEAT: Force a check every 2 seconds to fix "dead" states
+  // if the MutationObserver misses a text-node update.
+  setInterval(check, 2000);
 
   // --- CROSS-TAB SYNC ---
   window.addEventListener('storage', event => {
