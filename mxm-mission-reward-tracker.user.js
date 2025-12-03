@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         MxM Mission Reward Tracker (v6.9.0 Stable)
+// @name         MxM Mission Reward Tracker (v6.9.2 Stable)
 // @namespace    mxm-tools
-// @version      6.9.0
+// @version      6.9.2
 // @description  Day/Week counters + Portfolio + Live FX + Cross-Tab Sync (No Notion)
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
@@ -12,11 +12,12 @@
 
 (function () {
   'use strict';
-  console.log('[MXM Tracker v6.9.0] FX + Sync + Stability Fixes');
+  console.log('[MXM Tracker v6.9.2] Anti-Freeze + Global stats + Portfolio catch-up');
 
   // --- CONFIG ---
   const WIDGET_ID = 'mxm-dashboard-widget';
-  const HUMAN_SPEED_LIMIT = 1; // INCREASED FROM 1 TO PREVENT "LOCKOUTS"
+  // Allow small multi-step jumps without lockouts; huge jumps are still guarded.
+  const HUMAN_SPEED_LIMIT = 1.3;
 
   // Brand colors
   const COLOR_NAVY_DARK = '#0b1018';
@@ -31,10 +32,11 @@
     KES: { symbol: 'KSh', factor: 129,  flag: '🇰🇪' }
   };
 
-  const SETTINGS_KEY = 'mxmSettings_v6';
-  const STATS_KEY = 'mxmStats_v7';
+  // Shared key names for stable + beta (note: localStorage itself is still per subdomain)
+  const SETTINGS_KEY = 'mxmSettings_global';
+  const STATS_KEY = 'mxmStats_global';
 
-  // Drop corrupted stats from the previous version
+  // Clean up only legacy stats; DO NOT delete global stats
   localStorage.removeItem('mxmStats_v6');
 
   const FX_API_URL = 'https://open.er-api.com/v6/latest/USD';
@@ -212,16 +214,16 @@
 
     div.innerHTML = `
       <div style="padding:10px 12px; display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.7); border-top-left-radius:10px; border-top-right-radius:10px;">
-        <span id="mxm-compact-day" 
+        <span id="mxm-compact-day"
               style="font-weight:800; font-size:10px; letter-spacing:1px; color:${COLOR_GOLD}; text-transform:uppercase;">
            0 Today
         </span>
         <div style="display:flex; align-items:center; gap:6px;">
           <span id="mxm-top-cur" style="font-size:11px; opacity:0.85;">USD</span>
-          <img id="mxm-cur-flag" 
+          <img id="mxm-cur-flag"
                src="https://flagcdn.com/us.svg"
                style="cursor:pointer; width:22px; height:16px; border-radius:2px;" />
-          <span id="mxm-toggle-view" 
+          <span id="mxm-toggle-view"
                 style="cursor:pointer; font-size:14px; opacity:0.8; padding-left:4px;">▣</span>
         </div>
       </div>
@@ -369,7 +371,7 @@
     }
   }
 
-  // --- LOGIC ---
+  // --- LOGIC (PATCHED v6.9.2) ---
   function updateUI() {
     const widget = createWidget();
     if (!widget) return;
@@ -431,13 +433,21 @@
       stats.portfolio[missionId] = { usd: 0, tasks: 0 };
     }
 
-    // 1. Mission changed OR First Run → Reset Baseline
+    // --- PORTFOLIO CATCH-UP (no new task required) ---
+    // If system "Completed" is ahead of what we have in portfolio, top it up.
+    // This lets portfolio pick up historical progress even if the script wasn't active.
+    const storedTasks = Number(stats.portfolio[missionId].tasks) || 0;
+    if (count > storedTasks) {
+      const diff = count - storedTasks;
+      stats.portfolio[missionId].tasks = count;
+      stats.portfolio[missionId].usd += diff * rate;
+      // Note: day/week counters are NOT retroactively updated here on purpose.
+      // We only sync portfolio; daily/weekly should reflect tasks seen in-session.
+      saveStats(stats);
+    }
+
+    // 1. Mission changed OR first run → baseline setup (after catch-up)
     if (stats.lastMissionId !== missionId || stats.lastGlobalCount === null) {
-      // If this is a new mission and we have a count, seed the portfolio if empty
-      if (stats.lastMissionId !== missionId && count > 0 && stats.portfolio[missionId].tasks === 0) {
-        stats.portfolio[missionId].tasks = count;
-        stats.portfolio[missionId].usd = count * rate;
-      }
       stats.lastGlobalCount = count;
       stats.lastMissionId = missionId;
       stats.lastRate = rate;
@@ -447,7 +457,6 @@
 
     // 2. Glitch protection (Count dropped?)
     if (count < stats.lastGlobalCount) {
-      // Allow a reset if the drop is massive (e.g. page bug), otherwise ignore
       console.log(`[MXM Tracker] Count dropped ${stats.lastGlobalCount} -> ${count}. Ignoring.`);
       return;
     }
@@ -470,7 +479,6 @@
       }
 
       // CRITICAL FIX: Always update the baseline if the count went up.
-      // This prevents the "infinite freeze" if a jump was too big.
       stats.lastGlobalCount = count;
       stats.lastRate = rate;
       saveStats(stats);
@@ -489,10 +497,9 @@
   observer.observe(document.body, { childList: true, subtree: true });
 
   // HEARTBEAT: Force a check every 2 seconds to fix "dead" states
-  // if the MutationObserver misses a text-node update.
   setInterval(check, 2000);
 
-  // --- CROSS-TAB SYNC ---
+  // --- CROSS-TAB SYNC (same origin only; stable/beta each keep their own LS) ---
   window.addEventListener('storage', event => {
     if (event.key === STATS_KEY || event.key === SETTINGS_KEY) {
       updateUI();
