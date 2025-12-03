@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         MxM Mission Reward Tracker (v6.9.2 Stable)
+// @name         MxM Mission Reward Tracker (v6.9.5 Tuned)
 // @namespace    mxm-tools
-// @version      6.9.2
-// @description  Day/Week counters + Portfolio + Live FX + Cross-Tab Sync (No Notion)
+// @version      6.9.5
+// @description  Day/Week counters + Portfolio + Live Rates (ZAR/NGN/KES) + Anti-Freeze (1.3 Tolerance)
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
 // @match        https://curators-beta.musixmatch.com/*
@@ -12,48 +12,45 @@
 
 (function () {
   'use strict';
-  console.log('[MXM Tracker v6.9.2] Anti-Freeze + Global stats + Portfolio catch-up');
+  console.log('[MXM Tracker v6.9.5] Community Edition + 1.3 Tolerance');
 
   // --- CONFIG ---
   const WIDGET_ID = 'mxm-dashboard-widget';
-  // Allow small multi-step jumps without lockouts; huge jumps are still guarded.
+
+  // TOLERANCE SETTING: 1.3
+  // Allows a single task even if timing is slightly off, but strictly blocks double-jumps (2.0).
   const HUMAN_SPEED_LIMIT = 1.3;
 
   // Brand colors
   const COLOR_NAVY_DARK = '#0b1018';
   const COLOR_GOLD = '#d4af37';
 
-  // RATES (static base, factors updated from FX API)
+  // RATES
   const CURRENCIES = {
     USD: { symbol: '$',  factor: 1,     flag: '🇺🇸' },
-    ZAR: { symbol: 'R',  factor: 17.11, flag: '🇿🇦' },
+    ZAR: { symbol: 'R',  factor: 17.06, flag: '🇿🇦' },
     EUR: { symbol: '€',  factor: 0.86,  flag: '🇪🇺' },
     NGN: { symbol: '₦',  factor: 1441,  flag: '🇳🇬' },
     KES: { symbol: 'KSh', factor: 129,  flag: '🇰🇪' }
   };
 
-  // Shared key names for stable + beta (note: localStorage itself is still per subdomain)
   const SETTINGS_KEY = 'mxmSettings_global';
   const STATS_KEY = 'mxmStats_global';
 
-  // Clean up only legacy stats; DO NOT delete global stats
+  // Cleanup legacy
   localStorage.removeItem('mxmStats_v6');
 
   const FX_API_URL = 'https://open.er-api.com/v6/latest/USD';
   const FX_UPDATE_INTERVAL = 24 * 60 * 60 * 1000; // 1 day
   const MUTATION_DEBOUNCE_MS = 250;
 
-  // --- SMALL HELPERS ---
+  // --- HELPERS ---
   function safeParse(json, fallback) {
     try { return JSON.parse(json); } catch (e) { return fallback; }
   }
 
   function safeSetItem(key, value) {
-    try {
-      localStorage.setItem(key, value);
-    } catch (e) {
-      console.error('[MXM Tracker] localStorage error for', key, e);
-    }
+    try { localStorage.setItem(key, value); } catch (e) { console.error(e); }
   }
 
   function updateTextIfChanged(idOrEl, value) {
@@ -63,20 +60,14 @@
     if (el.textContent !== str) el.textContent = str;
   }
 
-  // --- DATE HELPERS ---
   function getIds() {
     const now = new Date();
-
-    // Day ID (resets every midnight)
     const dayId = now.toLocaleDateString('en-CA');
-
-    // Week logic (Monday → Sunday)
     const d = new Date(now);
-    const day = d.getDay(); // 0 = Sun, 1 = Mon, ...
-    const mondayOffset = (day === 0 ? -6 : 1 - day); // Move to Monday
+    const day = d.getDay();
+    const mondayOffset = (day === 0 ? -6 : 1 - day);
     const monday = new Date(d.setDate(d.getDate() + mondayOffset));
     const weekId = monday.toLocaleDateString('en-CA');
-
     return { dayId, weekId };
   }
 
@@ -90,32 +81,29 @@
         ids,
         counts: { day: 0, week: 0 },
         money: { day: 0, week: 0 },
-        portfolio: {}, // { missionId: { usd, tasks } }
+        portfolio: {},
         lastGlobalCount: null,
         lastMissionId: null,
         lastRate: 1.0
       };
     }
 
-    // Number safety
     s.counts.day  = Number(s.counts.day)  || 0;
     s.counts.week = Number(s.counts.week) || 0;
     s.money.day   = Number(s.money.day)   || 0;
     s.money.week  = Number(s.money.week)  || 0;
 
-    // Day/Week reset (portfolio never auto-reset)
     if (s.ids.dayId !== ids.dayId) {
       s.counts.day = 0;
       s.money.day = 0;
       s.ids.dayId = ids.dayId;
-      s.lastGlobalCount = null; // force re-baseline
+      s.lastGlobalCount = null;
     }
     if (s.ids.weekId !== ids.weekId) {
       s.counts.week = 0;
       s.money.week = 0;
       s.ids.weekId = ids.weekId;
     }
-
     return s;
   }
 
@@ -127,8 +115,7 @@
     const raw = localStorage.getItem(SETTINGS_KEY);
     const base = { currency: 'USD' };
     if (!raw) return base;
-    const parsed = safeParse(raw, {});
-    return { ...base, ...parsed };
+    return { ...base, ...safeParse(raw, {}) };
   }
 
   function saveSettings(s) {
@@ -173,7 +160,7 @@
     return m ? m[1] : 'unknown';
   }
 
-  // --- PORTFOLIO CALCULATOR ---
+  // --- PORTFOLIO ---
   function getPortfolioTotal(stats) {
     let totalUSD = 0;
     let totalTasks = 0;
@@ -186,14 +173,7 @@
   }
 
   // --- WIDGET UI ---
-  const FLAG_ISO = {
-    USD: "us",
-    ZAR: "za",
-    EUR: "eu",
-    NGN: "ng",
-    KES: "ke"
-  };
-
+  const FLAG_ISO = { USD: "us", ZAR: "za", EUR: "eu", NGN: "ng", KES: "ke" };
   let dragState = null;
 
   function createWidget() {
@@ -220,11 +200,9 @@
         </span>
         <div style="display:flex; align-items:center; gap:6px;">
           <span id="mxm-top-cur" style="font-size:11px; opacity:0.85;">USD</span>
-          <img id="mxm-cur-flag"
-               src="https://flagcdn.com/us.svg"
+          <img id="mxm-cur-flag" src="https://flagcdn.com/us.svg"
                style="cursor:pointer; width:22px; height:16px; border-radius:2px;" />
-          <span id="mxm-toggle-view"
-                style="cursor:pointer; font-size:14px; opacity:0.8; padding-left:4px;">▣</span>
+          <span id="mxm-toggle-view" style="cursor:pointer; font-size:14px; opacity:0.8; padding-left:4px;">▣</span>
         </div>
       </div>
 
@@ -257,18 +235,12 @@
       </div>
     `;
 
-    // Drag handling
     div.addEventListener('mousedown', e => {
       const target = e.target;
-      if (
-        target.id === 'mxm-cur-flag' ||
-        target.id === 'mxm-download-stats' ||
-        target.id === 'mxm-reset-portfolio'
-      ) return;
+      if (target.id === 'mxm-cur-flag' || target.id === 'mxm-download-stats' || target.id === 'mxm-reset-portfolio') return;
       const rect = div.getBoundingClientRect();
       dragState = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     });
-
     document.addEventListener('mouseup', () => { dragState = null; });
     document.addEventListener('mousemove', e => {
       if (dragState) {
@@ -277,18 +249,13 @@
       }
     });
 
-    // --- COMPACT / FULL TOGGLE ---
     let compact = false;
-
     div.querySelector('#mxm-toggle-view').addEventListener('click', e => {
       compact = !compact;
       div.style.height = compact ? '60px' : 'auto';
       div.style.overflow = compact ? 'hidden' : 'visible';
-
-      // Hide main grid and mission section in compact mode
       const grid = div.querySelector('div[style*="grid-template-columns"]');
       const footer = div.querySelector('div[style*="MISSION VALUE"]')?.parentElement;
-
       if (compact) {
         if (grid) grid.style.display = 'none';
         if (footer) footer.style.display = 'none';
@@ -298,7 +265,6 @@
       }
     });
 
-    // Currency cycle
     div.querySelector('#mxm-cur-flag').addEventListener('click', e => {
       e.stopPropagation();
       const s = loadSettings();
@@ -309,24 +275,15 @@
       updateUI();
     });
 
-    // Buttons: Download + Reset
     const dlBtn = div.querySelector('#mxm-download-stats');
     const resetBtn = div.querySelector('#mxm-reset-portfolio');
-
     if (dlBtn) {
       dlBtn.addEventListener('mousedown', e => e.stopPropagation());
-      dlBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        downloadStats();
-      });
+      dlBtn.addEventListener('click', e => { e.stopPropagation(); downloadStats(); });
     }
-
     if (resetBtn) {
       resetBtn.addEventListener('mousedown', e => e.stopPropagation());
-      resetBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        resetPortfolio();
-      });
+      resetBtn.addEventListener('click', e => { e.stopPropagation(); resetPortfolio(); });
     }
 
     document.body.appendChild(div);
@@ -355,7 +312,7 @@
     updateUI();
   }
 
-  // --- LIVE FX RATES (factors only) ---
+  // --- LIVE FX ---
   async function refreshRates() {
     try {
       const res = await fetch(FX_API_URL);
@@ -366,24 +323,19 @@
       if (data.rates.NGN) CURRENCIES.NGN.factor = data.rates.NGN;
       if (data.rates.KES) CURRENCIES.KES.factor = data.rates.KES;
       updateUI();
-    } catch (e) {
-      console.error('[MXM Tracker] FX fetch failed', e);
-    }
+    } catch (e) { console.error(e); }
   }
 
-  // --- LOGIC (PATCHED v6.9.2) ---
+  // --- CORE LOGIC ---
   function updateUI() {
     const widget = createWidget();
     if (!widget) return;
-
     const stats = loadStats();
     const settings = loadSettings();
     const currency = CURRENCIES[settings.currency] || CURRENCIES.USD;
-
     const count = getCompletedTaskCount() || 0;
     const rate = getMissionRewardRate() || 1.0;
     const pageTotal = (count * rate * currency.factor).toFixed(2);
-
     const portfolio = getPortfolioTotal(stats);
 
     const flagEl = document.getElementById('mxm-cur-flag');
@@ -391,33 +343,19 @@
     updateTextIfChanged('mxm-top-cur', settings.currency);
     updateTextIfChanged('mxm-page-total', `${currency.symbol}${pageTotal}`);
     updateTextIfChanged('mxm-compact-day', `${stats.counts.day} Today`);
-
     updateTextIfChanged('val-c-day', stats.counts.day);
     updateTextIfChanged('val-c-week', stats.counts.week);
-    updateTextIfChanged(
-      'val-m-day',
-      currency.symbol + (stats.money.day * currency.factor).toFixed(0)
-    );
-    updateTextIfChanged(
-      'val-m-week',
-      currency.symbol + (stats.money.week * currency.factor).toFixed(0)
-    );
-
+    updateTextIfChanged('val-m-day', currency.symbol + (stats.money.day * currency.factor).toFixed(0));
+    updateTextIfChanged('val-m-week', currency.symbol + (stats.money.week * currency.factor).toFixed(0));
     updateTextIfChanged('val-c-total', portfolio.tasks);
-    updateTextIfChanged(
-      'val-m-total',
-      currency.symbol + (portfolio.usd * currency.factor).toFixed(0)
-    );
+    updateTextIfChanged('val-m-total', currency.symbol + (portfolio.usd * currency.factor).toFixed(0));
   }
 
   function check() {
     const isTaskPage = /\/(tasks|missions)\//.test(window.location.pathname);
     const widget = createWidget();
     if (!widget) return;
-    if (!isTaskPage) {
-      widget.style.display = 'none';
-      return;
-    }
+    if (!isTaskPage) { widget.style.display = 'none'; return; }
     widget.style.display = 'block';
 
     const count = getCompletedTaskCount();
@@ -428,25 +366,20 @@
 
     if (count === null || missionId === 'unknown') return;
 
-    // Ensure portfolio entry
     if (!stats.portfolio[missionId]) {
       stats.portfolio[missionId] = { usd: 0, tasks: 0 };
     }
 
-    // --- PORTFOLIO CATCH-UP (no new task required) ---
-    // If system "Completed" is ahead of what we have in portfolio, top it up.
-    // This lets portfolio pick up historical progress even if the script wasn't active.
+    // Portfolio Catch-up
     const storedTasks = Number(stats.portfolio[missionId].tasks) || 0;
     if (count > storedTasks) {
       const diff = count - storedTasks;
       stats.portfolio[missionId].tasks = count;
       stats.portfolio[missionId].usd += diff * rate;
-      // Note: day/week counters are NOT retroactively updated here on purpose.
-      // We only sync portfolio; daily/weekly should reflect tasks seen in-session.
       saveStats(stats);
     }
 
-    // 1. Mission changed OR first run → baseline setup (after catch-up)
+    // 1. Mission changed OR First Run
     if (stats.lastMissionId !== missionId || stats.lastGlobalCount === null) {
       stats.lastGlobalCount = count;
       stats.lastMissionId = missionId;
@@ -455,9 +388,8 @@
       return;
     }
 
-    // 2. Glitch protection (Count dropped?)
+    // 2. Count dropped? Ignore.
     if (count < stats.lastGlobalCount) {
-      console.log(`[MXM Tracker] Count dropped ${stats.lastGlobalCount} -> ${count}. Ignoring.`);
       return;
     }
 
@@ -465,7 +397,7 @@
     const delta = count - stats.lastGlobalCount;
 
     if (delta > 0) {
-      // SAFETY CHECK: Only pay out if the jump is reasonable
+      // STRICT CHECK: Only reward if delta is <= 1.3
       if (delta <= HUMAN_SPEED_LIMIT) {
         const earned = delta * rate;
         stats.portfolio[missionId].tasks += delta;
@@ -474,11 +406,9 @@
         stats.counts.week += delta;
         stats.money.day += earned;
         stats.money.week += earned;
-      } else {
-        console.warn(`[MXM Tracker] Huge jump detected (${delta}). Updating baseline but skipping reward.`);
       }
 
-      // CRITICAL FIX: Always update the baseline if the count went up.
+      // Always update baseline
       stats.lastGlobalCount = count;
       stats.lastRate = rate;
       saveStats(stats);
@@ -486,7 +416,7 @@
     }
   }
 
-  // --- MUTATION OBSERVER + HEARTBEAT ---
+  // --- HEARTBEAT ---
   let mutationTimeout = null;
   function scheduleCheck() {
     if (mutationTimeout) clearTimeout(mutationTimeout);
@@ -496,17 +426,12 @@
   const observer = new MutationObserver(scheduleCheck);
   observer.observe(document.body, { childList: true, subtree: true });
 
-  // HEARTBEAT: Force a check every 2 seconds to fix "dead" states
   setInterval(check, 2000);
 
-  // --- CROSS-TAB SYNC (same origin only; stable/beta each keep their own LS) ---
   window.addEventListener('storage', event => {
-    if (event.key === STATS_KEY || event.key === SETTINGS_KEY) {
-      updateUI();
-    }
+    if (event.key === STATS_KEY || event.key === SETTINGS_KEY) updateUI();
   });
 
-  // Init
   refreshRates();
   setInterval(refreshRates, FX_UPDATE_INTERVAL);
   check();
