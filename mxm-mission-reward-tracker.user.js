@@ -16,7 +16,7 @@
 
   // --- CONFIG ---
   const WIDGET_ID = 'mxm-dashboard-widget';
-  const HUMAN_SPEED_LIMIT = 5; // INCREASED FROM 1 TO PREVENT "LOCKOUTS"
+  const HUMAN_SPEED_LIMIT = 1; // INCREASED FROM 1 TO PREVENT "LOCKOUTS"
 
   // Brand colors
   const COLOR_NAVY_DARK = '#0b1018';
