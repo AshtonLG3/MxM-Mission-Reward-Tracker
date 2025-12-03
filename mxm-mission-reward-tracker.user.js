@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         MxM Mission Reward Tracker (v6.9.5 Tuned)
+// @name         MxM Mission Reward Tracker (v6.9.6 Tuned)
 // @namespace    mxm-tools
-// @version      6.9.5
+// @version      6.9.6
 // @description  Day/Week counters + Portfolio + Live Rates (ZAR/NGN/KES) + Anti-Freeze (1.3 Tolerance)
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
@@ -14,7 +14,7 @@
 
 (function () {
   'use strict';
-  console.log('[MXM Tracker v6.9.5] Community Edition + 1.3 Tolerance');
+  console.log('[MXM Tracker v6.9.6] Community Edition + 1.3 Tolerance');
 
   // --- CONFIG ---
   const WIDGET_ID = 'mxm-dashboard-widget';
@@ -65,11 +65,11 @@
   function getIds() {
     const now = new Date();
     const dayId = now.toLocaleDateString('en-CA');
-    const d = new Date(now);
-    const day = d.getDay();
-    const mondayOffset = (day === 0 ? -6 : 1 - day);
-    const monday = new Date(d.setDate(d.getDate() + mondayOffset));
-    const weekId = monday.toLocaleDateString('en-CA');
+    const weekStart = new Date(now);
+    weekStart.setHours(0, 0, 0, 0);
+    const day = weekStart.getDay();
+    weekStart.setDate(weekStart.getDate() - day);
+    const weekId = weekStart.toLocaleDateString('en-CA');
     return { dayId, weekId };
   }
 
