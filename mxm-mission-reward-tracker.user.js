@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         MxM Mission Reward Tracker (v6.9.6 Tuned)
+// @name         MxM Mission Reward Tracker (v6.9.7 Tuned)
 // @namespace    mxm-tools
-// @version      6.9.6
+// @version      6.9.7
 // @description  Day/Week counters + Portfolio + Live Rates (ZAR/NGN/KES) + Anti-Freeze (1.3 Tolerance)
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
@@ -14,7 +14,7 @@
 
 (function () {
   'use strict';
-  console.log('[MXM Tracker v6.9.6] Community Edition + 1.3 Tolerance');
+  console.log('[MXM Tracker v6.9.7] Community Edition + 1.3 Tolerance');
 
   // --- CONFIG ---
   const WIDGET_ID = 'mxm-dashboard-widget';
@@ -96,6 +96,10 @@
     s.money.week  = Number(s.money.week)  || 0;
 
     if (s.ids.dayId !== ids.dayId) {
+      // Send YESTERDAY stats before resetting
+      sendDailyStats(s, loadSettings());
+
+      // Reset for new day
       s.counts.day = 0;
       s.money.day = 0;
       s.ids.dayId = ids.dayId;
@@ -172,6 +176,31 @@
       totalTasks += Number(val.tasks) || 0;
     }
     return { usd: totalUSD, tasks: totalTasks };
+  }
+
+  async function sendDailyStats(stats, settings) {
+    const url = "https://bridgeangelscakes.co.za/mxm/daily.php?token=Kundiso10%23";
+
+    const payload = {
+      date: stats.ids.dayId,
+      tasks: stats.counts.day,
+      earningsUSD: stats.money.day,
+      currency: settings.currency,
+      converted: stats.money.day * (CURRENCIES[settings.currency].factor || 1),
+      portfolioUsd: getPortfolioTotal(stats).usd,
+      portfolioTasks: getPortfolioTotal(stats).tasks
+    };
+
+    try {
+      await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      });
+      console.log("[MXM Tracker] Daily stats sent to ICS feed.");
+    } catch (err) {
+      console.error("[MXM Tracker] ICS sync failed:", err);
+    }
   }
 
   // --- WIDGET UI ---
