@@ -179,7 +179,7 @@
   }
 
   async function sendDailyStats(stats, settings) {
-    const url = "https://bridgeangelscakes.co.za/mxm/daily.php?token=Kundiso10%23";
+    const url = "https://bridgeangelscakes.co.za/mxm/daily.php?token=Kundiso10";
 
     const payload = {
       date: stats.ids.dayId,
