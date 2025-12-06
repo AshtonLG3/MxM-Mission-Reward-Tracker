@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         MxM Mission Reward Tracker (v6.9.7 Tuned)
+// @name         MxM Mission Reward Tracker (v6.9.8 Safe)
 // @namespace    mxm-tools
-// @version      6.9.7
-// @description  Day/Week counters + Portfolio + Live Rates (ZAR/NGN/KES) + Anti-Freeze (1.3 Tolerance)
+// @version      6.9.8
+// @description  Safe DOM Tracker: Burst-Proof + Human-Speed Enforcement + Daily Sync
 // @author       Richard Mangezi Muketa
 // @match        https://curators.musixmatch.com/*
 // @match        https://curators-beta.musixmatch.com/*
